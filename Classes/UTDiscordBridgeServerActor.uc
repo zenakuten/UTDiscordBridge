@@ -15,6 +15,15 @@ var config int MaxRetries;
 var config float RequestTimeout;
 var config bool bDebug;
 
+// Humans announced as joined this map, with their last known spectator state,
+// so switches between playing and spectating can be detected.
+struct TrackedPlayer
+{
+    var PlayerReplicationInfo PRI;
+    var bool bSpectator;
+};
+var array<TrackedPlayer> TrackedPlayers;
+
 var UTDBBroadcastHandler BridgeBroadcastHandler;
 var BroadcastHandler PreviousBroadcastHandler;
 var UTDBGameRules BridgeGameRules;
@@ -54,6 +63,9 @@ function PostBeginPlay()
 
     if (bForwardGameEvents)
         HttpClient.EnqueueMapStart();
+
+    if (bForwardPlayerEvents)
+        SetTimer(1.0, true);
 
     Log("UTDB initialized");
 }
@@ -145,17 +157,80 @@ function bool IsHumanPlayer(PlayerReplicationInfo PlayerPRI, bool bRequireConnec
     return true;
 }
 
+function int FindTracked(PlayerReplicationInfo PlayerPRI)
+{
+    local int Index;
+
+    for (Index = 0; Index < TrackedPlayers.Length; Index++)
+        if (TrackedPlayers[Index].PRI == PlayerPRI)
+            return Index;
+
+    return -1;
+}
+
+// Called for the engine's "entered the game" (1) and "joined as spectator"
+// (16) messages. The engine also sends 1 when a spectator becomes a player,
+// so a player already tracked this map is a mode change, not a join.
 function ReportPlayerJoin(PlayerReplicationInfo PlayerPRI, bool bSpectator)
 {
+    local int Index;
+
     if (!IsHumanPlayer(PlayerPRI, true))
         return;
 
-    if (HttpClient != None && bForwardPlayerEvents && PlayerPRI != None)
+    if (FindTracked(PlayerPRI) != -1)
+    {
+        CheckModeChanges();
+        return;
+    }
+
+    Index = TrackedPlayers.Length;
+    TrackedPlayers.Length = Index + 1;
+    TrackedPlayers[Index].PRI = PlayerPRI;
+    TrackedPlayers[Index].bSpectator = PlayerPRI.bOnlySpectator;
+
+    if (HttpClient != None && bForwardPlayerEvents)
         HttpClient.EnqueuePlayerEvent(PlayerPRI.PlayerName, true, bSpectator);
+}
+
+// Report any tracked human who switched between playing and spectating.
+function CheckModeChanges()
+{
+    local int Index;
+
+    for (Index = TrackedPlayers.Length - 1; Index >= 0; Index--)
+    {
+        if (TrackedPlayers[Index].PRI == None || TrackedPlayers[Index].PRI.bDeleteMe)
+        {
+            TrackedPlayers.Remove(Index, 1);
+            continue;
+        }
+
+        if (TrackedPlayers[Index].PRI.bOnlySpectator != TrackedPlayers[Index].bSpectator)
+        {
+            TrackedPlayers[Index].bSpectator = TrackedPlayers[Index].PRI.bOnlySpectator;
+            if (HttpClient != None && bForwardPlayerEvents)
+                HttpClient.EnqueueModeChange(
+                    TrackedPlayers[Index].PRI.PlayerName,
+                    TrackedPlayers[Index].bSpectator
+                );
+        }
+    }
+}
+
+event Timer()
+{
+    CheckModeChanges();
 }
 
 function ReportPlayerLeave(PlayerReplicationInfo PlayerPRI)
 {
+    local int Index;
+
+    Index = FindTracked(PlayerPRI);
+    if (Index != -1)
+        TrackedPlayers.Remove(Index, 1);
+
     if (!IsHumanPlayer(PlayerPRI, false))
         return;
 
@@ -226,7 +301,7 @@ static event string GetDescriptionText(string PropName)
         case "bForwardChat": return "Forward public player chat to Discord.";
         case "bForwardTeamChat": return "Forward private team chat. Leave disabled unless players expect this.";
         case "bForwardGameEvents": return "Forward map start and game end events.";
-        case "bForwardPlayerEvents": return "Forward join and leave events for human players and spectators (never bots, WebAdmin or other non-human spectators).";
+        case "bForwardPlayerEvents": return "Forward join, leave and player/spectator switch events for humans (never bots, WebAdmin or other non-human spectators).";
         case "QueueLimit": return "Maximum number of events held in memory while the relay is unavailable.";
         case "MaxRetries": return "Maximum retry count for temporary relay failures.";
         case "RequestTimeout": return "Connection timeout for the local relay.";

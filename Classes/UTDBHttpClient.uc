@@ -56,6 +56,17 @@ function EnqueuePlayerEvent(string PlayerName, bool bJoined, bool bSpectator)
     AddEvent(Body, false);
 }
 
+function EnqueueModeChange(string PlayerName, bool bNowSpectator)
+{
+    local string Body;
+
+    Body = StartEventJson("player_mode") $ ","
+        $ JsonField("player", PlayerName, true)
+        $ JsonBoolField("spectator", bNowSpectator, false)
+        $ "}";
+    AddEvent(Body, false);
+}
+
 function EnqueueGameEnd(PlayerReplicationInfo Winner, string Reason)
 {
     local string Body;

@@ -22,6 +22,7 @@ ALLOWED_EVENT_TYPES = {
     "game_end",
     "player_join",
     "player_leave",
+    "player_mode",
 }
 ALLOWED_WEBHOOK_HOSTS = {
     "discord.com",
@@ -186,6 +187,12 @@ def format_discord_payload(event, emoticons=()):
         subject = "Spectator" if event.get("spectator") is True else "Player"
         action = "joined" if event_type == "player_join" else "left"
         content = f"{subject} **{player}** {action} **{server}**."
+    elif event_type == "player_mode":
+        player = escape_markdown_name(require_text(event, "player"))
+        if event.get("spectator") is True:
+            content = f"Player **{player}** became a spectator on **{server}**."
+        else:
+            content = f"Spectator **{player}** joined the game on **{server}**."
     else:
         reason = escape_markdown_name(require_text(event, "reason"))
         winner = event.get("winner")
@@ -313,15 +320,18 @@ class RelayHandler(BaseHTTPRequestHandler):
             webhook_url, payload, self.server.discord_opener
         )
         LOG.info("forwarded %s event", event["type"])
-        self.send_response(204 if status == 204 else 200)
-        self.send_header("Content-Length", "0")
-        self.end_headers()
+        # Always reply 200 with a small body and close the connection.
+        # LibHTTP in UT2004 does not reliably finish a request whose reply
+        # is an empty 204, which leaves the bridge's queue waiting forever.
+        self.close_connection = True
+        self.send_json(200, {"ok": True})
 
     def send_json(self, status, value):
         body = json.dumps(value, separators=(",", ":")).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(body)
 
