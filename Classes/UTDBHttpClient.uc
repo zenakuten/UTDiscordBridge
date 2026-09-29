@@ -11,6 +11,9 @@ var UTDiscordBridgeServerActor Bridge;
 var HttpSock Socket;
 var array<PendingEvent> Queue;
 var bool bRequestActive;
+var bool bResponseReady;
+var int ResponseStatus;
+var float RequestStartTime;
 
 function Initialize(UTDiscordBridgeServerActor NewBridge)
 {
@@ -156,6 +159,7 @@ function SendNext()
     }
 
     Socket.OnComplete = RequestComplete;
+    Socket.OnReturnCode = RequestReturnCode;
     Socket.OnError = RequestError;
     Socket.OnConnectionTimeout = RequestTimeout;
     Socket.OnConnectError = ConnectError;
@@ -169,6 +173,8 @@ function SendNext()
     PostData.Length = 1;
     PostData[0] = Queue[0].Body;
     bRequestActive = true;
+    bResponseReady = false;
+    RequestStartTime = Level.TimeSeconds;
 
     if (Bridge.bDebug)
         Log("UTDB sending event; attempt" @ (Queue[0].RetryCount + 1));
@@ -177,14 +183,54 @@ function SendNext()
         RetryCurrent("request rejected by HTTP client");
 }
 
+// LibHTTP only calls OnComplete from TcpLink's Closed event, which OldUnreal
+// 3374 never delivers. The relay's status line is all we need, so record it
+// here and finish on the next tick, outside LibHTTP's call stack.
+function RequestReturnCode(HttpSock Sender, int ReturnCode, string ReturnMessage, string HttpVer)
+{
+    if (!bRequestActive || Sender != Socket || bResponseReady)
+        return;
+
+    ResponseStatus = ReturnCode;
+    bResponseReady = true;
+}
+
+event Tick(float DeltaTime)
+{
+    if (!bRequestActive)
+        return;
+
+    if (bResponseReady)
+    {
+        bResponseReady = false;
+        HandleResponse(ResponseStatus);
+        return;
+    }
+
+    // Last resort so one lost reply can never block the queue for a whole map.
+    if (Bridge != None && Level.TimeSeconds - RequestStartTime > FMax(1.0, Bridge.RequestTimeout) + 25.0)
+    {
+        Log("UTDB no reply from relay; dropping event");
+        bRequestActive = false;
+        DestroySocket();
+        if (Queue.Length > 0)
+            Queue.Remove(0, 1);
+        SendNext();
+    }
+}
+
+// Still used on engines where Closed does fire.
 function RequestComplete(HttpSock Sender)
 {
-    local int Status;
-
     if (!bRequestActive || Sender != Socket)
         return;
 
-    Status = Sender.LastStatus;
+    bResponseReady = false;
+    HandleResponse(Sender.LastStatus);
+}
+
+function HandleResponse(int Status)
+{
     bRequestActive = false;
     DestroySocket();
 
@@ -240,6 +286,7 @@ function RetryCurrent(string Reason)
         return;
 
     bRequestActive = false;
+    bResponseReady = false;
     DestroySocket();
     Queue[0].RetryCount++;
 
@@ -270,6 +317,7 @@ function DestroySocket()
         return;
 
     Socket.OnComplete = None;
+    Socket.OnReturnCode = None;
     Socket.OnError = None;
     Socket.OnConnectionTimeout = None;
     Socket.OnConnectError = None;

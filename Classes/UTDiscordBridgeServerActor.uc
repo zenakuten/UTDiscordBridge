@@ -124,14 +124,41 @@ function ReportChat(PlayerReplicationInfo SenderPRI, string Msg, name Type)
         HttpClient.EnqueueChat(SenderPRI.PlayerName, Msg, true);
 }
 
+// True only for a real person: a PlayerController that isn't a bot and isn't a
+// MessagingSpectator (WebAdmin and similar mod spectators subclass it).
+function bool IsHumanPlayer(PlayerReplicationInfo PlayerPRI, bool bRequireConnection)
+{
+    local PlayerController PC;
+
+    if (PlayerPRI == None || PlayerPRI.bBot)
+        return false;
+
+    PC = PlayerController(PlayerPRI.Owner);
+    if (PC == None || MessagingSpectator(PC) != None)
+        return false;
+
+    // A human always has a network connection or local viewport when they
+    // join. Not checked on leave, since the engine may clear it first.
+    if (bRequireConnection && PC.Player == None)
+        return false;
+
+    return true;
+}
+
 function ReportPlayerJoin(PlayerReplicationInfo PlayerPRI, bool bSpectator)
 {
+    if (!IsHumanPlayer(PlayerPRI, true))
+        return;
+
     if (HttpClient != None && bForwardPlayerEvents && PlayerPRI != None)
         HttpClient.EnqueuePlayerEvent(PlayerPRI.PlayerName, true, bSpectator);
 }
 
 function ReportPlayerLeave(PlayerReplicationInfo PlayerPRI)
 {
+    if (!IsHumanPlayer(PlayerPRI, false))
+        return;
+
     if (HttpClient != None && bForwardPlayerEvents && PlayerPRI != None)
         HttpClient.EnqueuePlayerEvent(
             PlayerPRI.PlayerName,
@@ -199,7 +226,7 @@ static event string GetDescriptionText(string PropName)
         case "bForwardChat": return "Forward public player chat to Discord.";
         case "bForwardTeamChat": return "Forward private team chat. Leave disabled unless players expect this.";
         case "bForwardGameEvents": return "Forward map start and game end events.";
-        case "bForwardPlayerEvents": return "Forward player and spectator join and leave events.";
+        case "bForwardPlayerEvents": return "Forward join and leave events for human players and spectators (never bots, WebAdmin or other non-human spectators).";
         case "QueueLimit": return "Maximum number of events held in memory while the relay is unavailable.";
         case "MaxRetries": return "Maximum retry count for temporary relay failures.";
         case "RequestTimeout": return "Connection timeout for the local relay.";
