@@ -82,8 +82,32 @@ class ValidationTests(unittest.TestCase):
         self.assertTrue(payload["content"].startswith("[TEAM] "))
 
     def test_formats_lifecycle_events(self):
-        self.assertIn("started", relay.format_discord_payload(event("map_start"))["content"])
-        self.assertIn("Winner", relay.format_discord_payload(event("game_end"))["content"])
+        map_event = event("map_start")
+        map_event["game_name"] = "DeathMatch"
+        map_payload = relay.format_discord_payload(map_event)
+        self.assertNotIn("content", map_payload)
+        self.assertEqual(
+            map_payload["embeds"],
+            [
+                {
+                    "title": "Switching map",
+                    "color": 15844367,
+                    "fields": [
+                        {"name": "Map", "value": "DM-Rankin", "inline": True},
+                        {"name": "Gametype", "value": "DeathMatch", "inline": True},
+                    ],
+                }
+            ],
+        )
+        self.assertEqual(
+            relay.format_discord_payload(event("match_start"))["content"],
+            "`Test Server` started `DM-Rankin`.",
+        )
+        self.assertEqual(
+            relay.format_discord_payload(event("game_end"))["content"],
+            "`Test Server` finished `DM-Rankin`. "
+            "Winner: `Player` (`25`) - `fraglimit`.",
+        )
         self.assertEqual(
             relay.format_discord_payload(event("player_join"))["content"],
             "Player **Player** joined **Test Server**.",
@@ -91,6 +115,14 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(
             relay.format_discord_payload(event("player_leave"))["content"],
             "Player **Player** left **Test Server**.",
+        )
+
+    def test_inline_code_replaces_embedded_backticks(self):
+        value = event("match_start")
+        value["server"] = "Test `Server`"
+        self.assertEqual(
+            relay.format_discord_payload(value)["content"],
+            "`Test 'Server'` started `DM-Rankin`.",
         )
 
     def test_loads_and_replaces_server_emoticons(self):

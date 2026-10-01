@@ -19,6 +19,7 @@ MAX_DISCORD_CONTENT = 2000
 ALLOWED_EVENT_TYPES = {
     "chat",
     "map_start",
+    "match_start",
     "game_end",
     "player_join",
     "player_leave",
@@ -104,6 +105,11 @@ def clean_text(value, limit):
     return value.replace("\x00", "").replace("\r\n", "\n").replace("\r", "\n")[:limit]
 
 
+def inline_code(value, limit=200):
+    value = clean_text(value, limit).replace("\n", " ").replace("`", "'")
+    return f"`{value}`"
+
+
 def load_emoticons(path):
     mappings = []
     seen = set()
@@ -180,7 +186,31 @@ def format_discord_payload(event, emoticons=()):
         prefix = "[TEAM] " if event.get("team") is True else ""
         content = f"{prefix}**{player}:** {message}"
     elif event_type == "map_start":
-        content = f"**{server}** started **{map_name}**."
+        game_name = event.get("game_name", event.get("game_type"))
+        if not isinstance(game_name, str):
+            raise RelayError(400, "game_name must be a string")
+        payload = {
+            "embeds": [
+                {
+                    "title": "Switching map",
+                    "color": 15844367,
+                    "fields": [
+                        {
+                            "name": "Map",
+                            "value": clean_text(event["map"], 256),
+                            "inline": True,
+                        },
+                        {
+                            "name": "Gametype",
+                            "value": clean_text(game_name, 256),
+                            "inline": True,
+                        },
+                    ],
+                }
+            ]
+        }
+    elif event_type == "match_start":
+        content = f"{inline_code(event['server'])} started {inline_code(event['map'])}."
     elif event_type in {"player_join", "player_leave"}:
         player = escape_markdown_name(require_text(event, "player"))
         subject = "Spectator" if event.get("spectator") is True else "Player"
@@ -190,21 +220,27 @@ def format_discord_payload(event, emoticons=()):
         reason = escape_markdown_name(require_text(event, "reason"))
         winner = event.get("winner")
         if winner is None:
-            content = f"**{server}** finished **{map_name}** ({reason})."
+            content = (
+                f"{inline_code(event['server'])} finished "
+                f"{inline_code(event['map'])} ({inline_code(event['reason'])})."
+            )
         else:
             winner = escape_markdown_name(require_text(event, "winner"))
             score = event.get("score")
             if not isinstance(score, int):
                 raise RelayError(400, "score must be an integer")
             content = (
-                f"**{server}** finished **{map_name}**. "
-                f"Winner: **{winner}** ({score}) - {reason}."
+                f"{inline_code(event['server'])} finished "
+                f"{inline_code(event['map'])}. Winner: "
+                f"{inline_code(event['winner'])} ({inline_code(str(score))}) - "
+                f"{inline_code(event['reason'])}."
             )
 
-    return {
-        "content": content[:MAX_DISCORD_CONTENT],
-        "allowed_mentions": {"parse": []},
-    }
+    if event_type != "map_start":
+        payload = {"content": content[:MAX_DISCORD_CONTENT]}
+
+    payload["allowed_mentions"] = {"parse": []}
+    return payload
 
 
 def parse_retry_after(body, headers):

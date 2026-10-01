@@ -59,6 +59,7 @@ bForwardChat=True
 bForwardTeamChat=False
 bForwardGameEvents=True
 bForwardPlayerEvents=True
+bIgnoreBotEvents=True
 QueueLimit=100
 MaxRetries=5
 RequestTimeout=5.000000
@@ -70,6 +71,9 @@ the machine hostname.
 
 Team chat is disabled by default because forwarding it to a public Discord
 channel may reveal private team communication.
+
+Bot and WebAdmin chat, join, and leave events are ignored by default. Set
+`bIgnoreBotEvents=False` to forward them.
 
 Treat `WebhookURL` as a password. Do not post it publicly or include it in logs.
 Regenerate the webhook in Discord if it is exposed.
@@ -124,7 +128,8 @@ listening on 127.0.0.1:8766
 ```
 
 When emoticons are loaded, it also reports the number of Unicode mappings.
-Starting a map should produce a map-start message in Discord.
+Loading a map should produce a "Switching map" embed in Discord. Starting and
+ending the match should produce separate lifecycle messages.
 
 UT2004 log messages from the bridge use the `UTDB` prefix.
 

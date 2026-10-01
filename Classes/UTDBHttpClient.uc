@@ -37,6 +37,14 @@ function EnqueueMapStart()
     AddEvent(Body, false);
 }
 
+function EnqueueMatchStart()
+{
+    local string Body;
+
+    Body = StartEventJson("match_start") $ "}";
+    AddEvent(Body, false);
+}
+
 function EnqueuePlayerEvent(string PlayerName, bool bJoined, bool bSpectator)
 {
     local string Body;
@@ -79,7 +87,8 @@ function string StartEventJson(string EventType)
         $ JsonField("webhook_url", Bridge.WebhookURL, true)
         $ JsonField("server", GetServerName(), true)
         $ JsonField("map", GetCurrentMapName(), true)
-        $ JsonField("game_type", string(Level.Game.Class), false);
+        $ JsonField("game_type", string(Level.Game.Class), true)
+        $ JsonField("game_name", Level.Game.GameName, false);
 }
 
 function string GetServerName()

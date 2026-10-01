@@ -10,6 +10,7 @@ var config bool bForwardChat;
 var config bool bForwardTeamChat;
 var config bool bForwardGameEvents;
 var config bool bForwardPlayerEvents;
+var config bool bIgnoreBotEvents;
 var config int QueueLimit;
 var config int MaxRetries;
 var config float RequestTimeout;
@@ -20,6 +21,7 @@ var BroadcastHandler PreviousBroadcastHandler;
 var UTDBGameRules BridgeGameRules;
 var UTDBPresenceMutator PresenceHook;
 var UTDBHttpClient HttpClient;
+var bool bReportedMatchStart;
 
 function PostBeginPlay()
 {
@@ -56,6 +58,17 @@ function PostBeginPlay()
         HttpClient.EnqueueMapStart();
 
     Log("UTDB initialized");
+}
+
+event MatchStarting()
+{
+    Super.MatchStarting();
+
+    if (!bReportedMatchStart && HttpClient != None && bForwardGameEvents)
+    {
+        bReportedMatchStart = true;
+        HttpClient.EnqueueMatchStart();
+    }
 }
 
 function InstallBroadcastHandler()
@@ -118,6 +131,9 @@ function ReportChat(PlayerReplicationInfo SenderPRI, string Msg, name Type)
     if (HttpClient == None || SenderPRI == None)
         return;
 
+    if (ShouldIgnorePlayer(SenderPRI))
+        return;
+
     if (Type == 'Say' && bForwardChat)
         HttpClient.EnqueueChat(SenderPRI.PlayerName, Msg, false);
     else if (Type == 'TeamSay' && bForwardTeamChat)
@@ -126,17 +142,37 @@ function ReportChat(PlayerReplicationInfo SenderPRI, string Msg, name Type)
 
 function ReportPlayerJoin(PlayerReplicationInfo PlayerPRI, bool bSpectator)
 {
-    if (HttpClient != None && bForwardPlayerEvents && PlayerPRI != None)
+    if (
+        HttpClient != None
+        && bForwardPlayerEvents
+        && PlayerPRI != None
+        && !ShouldIgnorePlayer(PlayerPRI)
+    )
         HttpClient.EnqueuePlayerEvent(PlayerPRI.PlayerName, true, bSpectator);
 }
 
 function ReportPlayerLeave(PlayerReplicationInfo PlayerPRI)
 {
-    if (HttpClient != None && bForwardPlayerEvents && PlayerPRI != None)
+    if (
+        HttpClient != None
+        && bForwardPlayerEvents
+        && PlayerPRI != None
+        && !ShouldIgnorePlayer(PlayerPRI)
+    )
         HttpClient.EnqueuePlayerEvent(
             PlayerPRI.PlayerName,
             false,
             PlayerPRI.bOnlySpectator
+        );
+}
+
+function bool ShouldIgnorePlayer(PlayerReplicationInfo PlayerPRI)
+{
+    return bIgnoreBotEvents
+        && PlayerPRI != None
+        && (
+            PlayerPRI.bBot
+            || MessagingSpectator(PlayerPRI.Owner) != None
         );
 }
 
@@ -181,6 +217,7 @@ static function FillPlayInfo(PlayInfo PlayInfo)
     PlayInfo.AddSetting("UTDiscordBridge", "bForwardTeamChat", "Forward team chat", 255, Weight++, "Check",,, true, true);
     PlayInfo.AddSetting("UTDiscordBridge", "bForwardGameEvents", "Forward game events", 255, Weight++, "Check",,, true, true);
     PlayInfo.AddSetting("UTDiscordBridge", "bForwardPlayerEvents", "Forward player joins and leaves", 255, Weight++, "Check",,, true, true);
+    PlayInfo.AddSetting("UTDiscordBridge", "bIgnoreBotEvents", "Ignore bots and WebAdmin", 255, Weight++, "Check",,, true, true);
     PlayInfo.AddSetting("UTDiscordBridge", "QueueLimit", "Queue limit", 255, Weight++, "Text", "3;1:500",, true, true);
     PlayInfo.AddSetting("UTDiscordBridge", "MaxRetries", "Maximum retries", 255, Weight++, "Text", "2;0:10",, true, true);
     PlayInfo.AddSetting("UTDiscordBridge", "RequestTimeout", "Relay timeout", 255, Weight++, "Text", "4;1:60",, true, true);
@@ -198,8 +235,9 @@ static event string GetDescriptionText(string PropName)
         case "ServerLabel": return "Public label shown in Discord. The machine hostname is never used.";
         case "bForwardChat": return "Forward public player chat to Discord.";
         case "bForwardTeamChat": return "Forward private team chat. Leave disabled unless players expect this.";
-        case "bForwardGameEvents": return "Forward map start and game end events.";
+        case "bForwardGameEvents": return "Forward map changes, match starts, and match ends.";
         case "bForwardPlayerEvents": return "Forward player and spectator join and leave events.";
+        case "bIgnoreBotEvents": return "Ignore bot and WebAdmin chat, join, and leave events.";
         case "QueueLimit": return "Maximum number of events held in memory while the relay is unavailable.";
         case "MaxRetries": return "Maximum retry count for temporary relay failures.";
         case "RequestTimeout": return "Connection timeout for the local relay.";
@@ -218,6 +256,7 @@ defaultproperties
     bForwardTeamChat=False
     bForwardGameEvents=True
     bForwardPlayerEvents=True
+    bIgnoreBotEvents=True
     QueueLimit=100
     MaxRetries=5
     RequestTimeout=5.000000
